@@ -83,25 +83,34 @@ for message in st.session_state.messages:
 query = st.chat_input("Ask something about the papers...")
 
 if query:
-    st.session_state.messages.append({"role": "user", "content": query})
+
+    st.session_state.messages.append(
+        {"role": "user", "content": query}
+    )
 
     with st.chat_message("user"):
         st.write(query)
 
     retrieved_docs = retriever.invoke(query)
-    context = "\n\n".join([doc.page_content for doc in retrieved_docs])
-    history_text = "\n".join(st.session_state.chat_history[-6:])
+
+    context = "\n\n".join(
+        [doc.page_content for doc in retrieved_docs]
+    )
+
+    history_text = "\n".join(
+        st.session_state.chat_history[-6:]
+    )
 
     prompt = f"""
 You are an AI Research Assistant built on 5 foundational AI research papers.
+
 Your job is to:
-- answer questions about AI research papers
-- explain concepts clearly and concisely
-- respond naturally to greetings and casual conversation
-- Answer all parts of the user's question if relevant information exists in the context.
+- Answer questions about AI research papers
+- Explain concepts clearly and concisely
+- Respond naturally to greetings and casual conversation
+
 Rules:
-- If the user greets you, respond warmly and ask how you can help.
-- If the user asks casual conversation unrelated to research, respond briefly and naturally.
+- If the user greets you, respond warmly.
 - For AI research questions, use ONLY the provided context.
 - Summarize instead of copying text directly.
 - Keep answers concise and clear.
@@ -118,35 +127,43 @@ Question:
 {query}
 """
 
-    with st.spinner("Thinking..."):
-        response = llm.invoke(prompt)
-        answer = response.content
+    try:
 
-    import time
+        with st.spinner("Thinking..."):
+            response = llm.invoke(prompt)
+            answer = response.content
 
-with st.chat_message("assistant"):
-    # Typing indicator
-    typing = st.empty()
-    for _ in range(3):
-        typing.markdown("⬤ ⬤ ⬤")
-        time.sleep(0.3)
-        typing.markdown("⬤ ⬤ &nbsp;")
-        time.sleep(0.3)
-        typing.markdown("⬤ &nbsp; &nbsp;")
-        time.sleep(0.3)
-    typing.empty()  # clear the typing indicator
+        with st.chat_message("assistant"):
 
-    # Then stream the answer
-    placeholder = st.empty()
-    displayed = ""
-    for char in answer:
-        displayed += char
-        placeholder.markdown(displayed)
-        time.sleep(0.01)
+            typing = st.empty()
 
-    st.session_state.chat_history.append(f"User: {query}")
-    st.session_state.chat_history.append(f"Assistant: {answer}")
-    if len(st.session_state.chat_history) > 20:
-        st.session_state.chat_history.pop(0)
+            for _ in range(2):
+                typing.markdown("⬤ ⬤ ⬤")
+                time.sleep(0.3)
 
-    st.session_state.messages.append({"role": "assistant", "content": answer})
+            typing.empty()
+
+            placeholder = st.empty()
+
+            displayed = ""
+
+            for char in answer:
+                displayed += char
+                placeholder.markdown(displayed)
+                time.sleep(0.005)
+
+        st.session_state.chat_history.append(
+            f"User: {query}"
+        )
+
+        st.session_state.chat_history.append(
+            f"Assistant: {answer}"
+        )
+
+        st.session_state.messages.append(
+            {"role": "assistant", "content": answer}
+        )
+
+    except Exception as e:
+
+        st.error(f"Error: {e}")
