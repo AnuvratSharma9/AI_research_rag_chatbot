@@ -1,58 +1,14 @@
+import os
+from dotenv import load_dotenv
 import streamlit as st
-import requests
 
-
-st.markdown("""
-<style>
-
-/* Main app width */
-.block-container {
-    max-width: 95%;
-    padding-top: 2rem;
-    padding-bottom: 2rem;
-}
-
-/* Main title */
-h1 {
-    font-size: 4rem !important;
-    font-weight: 800 !important;
-}
-
-/* Subtitle */
-p {
-    font-size: 1.3rem !important;
-}
-
-/* Chat messages */
-.stChatMessage {
-    font-size: 1.2rem !important;
-    padding: 1rem !important;
-}
-
-/* User input box */
-textarea {
-    font-size: 1.2rem !important;
-}
-
-/* Input area */
-.stChatInputContainer {
-    padding-top: 1rem;
-    padding-bottom: 1rem;
-}
-
-/* Blue info container */
-.custom-box {
-    background-color: #17304d;
-    padding: 30px;
-    border-radius: 18px;
-    font-size: 1.2rem;
-    line-height: 2;
-    margin-bottom: 25px;
-}
-
-</style>
-""", unsafe_allow_html=True)
-
+from langchain_community.document_loaders import PyMuPDFLoader
+from langchain_text_splitters import RecursiveCharacterTextSplitter
+from langchain_community.vectorstores import FAISS
+from langchain_huggingface import HuggingFaceEmbeddings
+from langchain_groq import ChatGroq
+import time
+load_dotenv()
 
 st.set_page_config(
     page_title="AI Research Assistant",
@@ -61,85 +17,136 @@ st.set_page_config(
 )
 
 st.title("🧠 AI Research Assistant")
+st.markdown("Ask questions about foundational AI research papers.")
+st.info("""
+📚 Powered by 5 foundational AI research papers:
 
-st.markdown(
-    "Ask questions about AI research papers."
-)
+- Attention Is All You Need  
+- Retrieval-Augmented Generation (RAG)  
+- Chain-of-Thought Prompting  
+- Llama 2  
+- ReAct
+""")
 
-st.info(
-    """
-    📚 Powered by 5 foundational AI research papers:
-    
-    • Attention Is All You Need  
-    • Retrieval-Augmented Generation (RAG)  
-    • Chain-of-Thought Prompting  
-    • Llama 2  
-    • ReAct
-    """
-)
+pdf_files = [
+    "data/attention.pdf",
+    "data/rag.pdf",
+    "data/react.pdf",
+    "data/cot.pdf",
+    "data/llama2.pdf"
+]
+
+@st.cache_resource
+def load_rag():
+    documents = []
+    for file in pdf_files:
+        loader = PyMuPDFLoader(file)
+        docs = loader.load()
+        documents.extend(docs)
+        print(f"Loaded {len(documents)} documents")
+
+    text_splitter = RecursiveCharacterTextSplitter(
+        chunk_size=500,
+        chunk_overlap=100
+    )
+    chunks = text_splitter.split_documents(documents)
+    print(f"Created {len(chunks)} chunks")
+
+    embeddings = HuggingFaceEmbeddings(
+        model_name="sentence-transformers/all-MiniLM-L6-v2"
+    )
+
+    vectorstore = FAISS.from_documents(chunks, embeddings)
+    retriever = vectorstore.as_retriever(search_kwargs={"k": 8})
+
+    llm = ChatGroq(
+        model="llama-3.3-70b-versatile",
+        api_key=os.getenv("GROQ_API_KEY"),
+        temperature=0.3
+    )
+
+    return retriever, llm
+
+with st.spinner("Loading research papers..."):
+    retriever, llm = load_rag()
 
 if "messages" not in st.session_state:
     st.session_state.messages = []
 
-
+if "chat_history" not in st.session_state:
+    st.session_state.chat_history = []
 
 for message in st.session_state.messages:
-
     with st.chat_message(message["role"]):
-
         st.markdown(message["content"])
 
+query = st.chat_input("Ask something about the papers...")
 
-user_input = st.chat_input(
-    "Ask your question..."
-)
-
-
-if user_input:
-
-   
-
-    st.session_state.messages.append(
-        {
-            "role": "user",
-            "content": user_input
-        }
-    )
+if query:
+    st.session_state.messages.append({"role": "user", "content": query})
 
     with st.chat_message("user"):
+        st.write(query)
 
-        st.markdown(user_input)
+    retrieved_docs = retriever.invoke(query)
+    context = "\n\n".join([doc.page_content for doc in retrieved_docs])
+    history_text = "\n".join(st.session_state.chat_history[-6:])
 
-  
+    prompt = f"""
+You are an AI Research Assistant built on 5 foundational AI research papers.
+Your job is to:
+- answer questions about AI research papers
+- explain concepts clearly and concisely
+- respond naturally to greetings and casual conversation
+- Answer all parts of the user's question if relevant information exists in the context.
+Rules:
+- If the user greets you, respond warmly and ask how you can help.
+- If the user asks casual conversation unrelated to research, respond briefly and naturally.
+- For AI research questions, use ONLY the provided context.
+- Summarize instead of copying text directly.
+- Keep answers concise and clear.
+- If the answer is not found in the context, say:
+"I don't know based on the research papers provided."
 
-    with st.chat_message("assistant"):
+Conversation History:
+{history_text}
 
-        with st.spinner("Thinking..."):
+Context:
+{context}
 
-            try:
+Question:
+{query}
+"""
 
-                response = requests.post(
-                    "http://127.0.0.1:8000/chat",
-                    json={
-                        "question": user_input
-                    }
-                )
+    with st.spinner("Thinking..."):
+        response = llm.invoke(prompt)
+        answer = response.content
 
-                data = response.json()
+    import time
 
-                answer = data["answer"]
+with st.chat_message("assistant"):
+    # Typing indicator
+    typing = st.empty()
+    for _ in range(3):
+        typing.markdown("⬤ ⬤ ⬤")
+        time.sleep(0.3)
+        typing.markdown("⬤ ⬤ &nbsp;")
+        time.sleep(0.3)
+        typing.markdown("⬤ &nbsp; &nbsp;")
+        time.sleep(0.3)
+    typing.empty()  # clear the typing indicator
 
-            except Exception as e:
+    # Then stream the answer
+    placeholder = st.empty()
+    displayed = ""
+    for char in answer:
+        displayed += char
+        placeholder.markdown(displayed)
+        time.sleep(0.01)
 
-                answer = f"Error: {e}"
+    st.session_state.chat_history.append(f"User: {query}")
+    st.session_state.chat_history.append(f"Assistant: {answer}")
+    if len(st.session_state.chat_history) > 20:
+        st.session_state.chat_history.pop(0)
 
-            st.markdown(answer)
-
-
-
-    st.session_state.messages.append(
-        {
-            "role": "assistant",
-            "content": answer
-        }
-    )
+    st.session_state.messages.append({"role": "assistant", "content": answer})
